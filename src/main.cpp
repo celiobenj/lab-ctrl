@@ -34,7 +34,7 @@ void setup() {
 
     // Criacao das filas FreeRTOS
     qControlEvents = xQueueCreate(8, sizeof(FsmEventMessage));
-    qPlotData      = xQueueCreate(32, sizeof(PlotSample));
+    qPlotData      = xQueueCreate(64, sizeof(PlotSample));
 
     // Inicializacao dos modulos
     controller_init(&motor, &encoder, qControlEvents, qPlotData);
