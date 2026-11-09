@@ -110,7 +110,7 @@
     <!-- ---- PARÂMETROS PRBS ---- -->
     <div class="config-group">
       <div class="group-header">
-        <span class="group-label">Sinal de Excitação PRBS</span>
+        <span class="group-label">Sinal de Excitação</span>
         <div class="group-actions">
           <button class="btn-group-action" id="btn-reset-prbs" type="button" title="Restaurar parâmetros padrão">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -118,7 +118,7 @@
               <path d="M8 1v4l3-2z" fill="currentColor"/>
             </svg>
           </button>
-          <button class="btn-group-action" id="btn-help-prbs" type="button" title="Ajuda sobre o PRBS">
+          <button class="btn-group-action" id="btn-help-prbs" type="button" title="Ajuda sobre o sinal de excitação">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5"/>
               <path d="M6.2 6.3a1.9 1.9 0 1 1 1.8 2.4V10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
@@ -150,13 +150,36 @@
         </div>
       </div>
 
+      <!-- Alerta de Ts muito baixo (< 5 ms) -->
+      <div id="ts-warning" class="input-warning" hidden>
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;margin-top:1px;" aria-hidden="true">
+          <path d="M8 1.5L14.5 13H1.5L8 1.5Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+          <path d="M8 6V9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="8" cy="11.5" r="0.75" fill="currentColor"/>
+        </svg>
+        <span>Atenção: Valores de Ts &lt; 5 ms aumentam muito o tráfego serial e o tamanho do arquivo CSV. Mantenha os ensaios curtos.</span>
+      </div>
+
       <!-- Stretch -->
       <div class="input-row">
-        <span class="input-label" title="Stretch (amostras por bit)">Stretch</span>
+        <span class="input-label" title="Stretch (amostras por nível)">Stretch</span>
         <div class="input-wrap">
           <input type="number" id="prbs-stretch" class="input-mono input-narrow"
-                 min="1" max="100" step="1" value="5" title="Quantidade de amostras consecutivas por bit">
-          <span class="input-unit">amostras/bit</span>
+                 min="1" step="1" value="5" title="Quantidade de amostras consecutivas por nível">
+          <span class="input-unit">amostras/nível</span>
+        </div>
+      </div>
+
+      <!-- Seed -->
+      <div class="input-row">
+        <span class="input-label" title="Semente inicial do gerador pseudoaleatório">Seed</span>
+        <div class="input-wrap">
+          <input type="number" id="prbs-seed" class="input-mono input-narrow"
+                 min="1" step="1" value="1234" title="Semente inicial (inteiro positivo)" disabled>
+          <label class="checkbox-label" title="Gera semente aleatória automaticamente a cada início">
+            <input type="checkbox" id="prbs-seed-random" checked>
+            <span>Aleatório</span>
+          </label>
         </div>
       </div>
     </div>
@@ -164,7 +187,7 @@
     <!-- ---- RESUMO DA TELEMETRIA ---- -->
     <div class="config-group">
       <div class="group-header">
-        <span class="group-label">Telemetria em Tempo Real</span>
+        <span class="group-label">Telemetria</span>
       </div>
 
       <div class="stats-grid">
@@ -175,14 +198,6 @@
         <div class="stat-card">
           <span class="stat-title" title="Tempo decorrido de ensaio">Tempo</span>
           <span class="stat-value" id="stat-time">0.0 s</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-title" title="Sinal de excitação PRBS atual">Último u(t)</span>
-          <span class="stat-value" id="stat-u">0</span>
-        </div>
-        <div class="stat-card">
-          <span class="stat-title" title="Resposta medida da planta atual">Último y(t)</span>
-          <span class="stat-value" id="stat-y">0.00</span>
         </div>
       </div>
     </div>
@@ -217,6 +232,8 @@
         <span class="toolbar-label">Janela</span>
         <select id="time-window" class="toolbar-select">
           <option value="0">Tudo</option>
+          <option value="0.5">0.5 s</option>
+          <option value="1">1 s</option>
           <option value="5">5 s</option>
           <option value="15" selected>15 s</option>
           <option value="30">30 s</option>
@@ -316,7 +333,7 @@
 <!-- Confirmação: restaurar padrões -->
 <div id="modal-reset" class="modal-overlay" hidden>
   <div class="modal-card">
-    <p id="modal-reset-text">Restaurar os parâmetros padrão do PRBS?</p>
+    <p id="modal-reset-text">Restaurar os parâmetros padrão do sinal de excitação?</p>
     <div class="modal-actions">
       <button id="btn-modal-reset-cancel"  class="btn btn--ghost">Cancelar</button>
       <button id="btn-modal-reset-confirm" class="btn btn--primary">Restaurar</button>

@@ -4,14 +4,18 @@
 
 const _DEFAULTS = {
   speed: {
-    levels:  '0, 255',
-    ts:      '5',
-    stretch: '5',
+    levels:     '0, 255',
+    ts:         '5',
+    stretch:    '5',
+    seed:       '1234',
+    seedRandom: true,
   },
   position: {
-    levels:  '-255, 255',
-    ts:      '5',
-    stretch: '5',
+    levels:     '-255, 255',
+    ts:         '5',
+    stretch:    '5',
+    seed:       '1234',
+    seedRandom: true,
   },
 };
 
@@ -30,23 +34,32 @@ export const HELP_CONTENT = {
     `,
   },
   prbs: {
-    title: 'Sinal de Excitação PRBS',
+    title: 'Sinal de Excitação',
     html: `
-      <p>A <strong>Sequência Binária Pseudo-Aleatória (PRBS)</strong> é um sinal determinístico gerado por um registrador de deslocamento com realimentação linear (LFSR de 14 bits), possuindo propriedades espectrais semelhantes às do ruído branco para excitar simultaneamente todas as frequências da planta.</p>
+      <p>Sinal pseudoaleatório gerado através do algoritmo <strong>Xoshiro128++</strong> para excitar a planta em múltiplas frequências.</p>
       <hr>
-      <p><strong>Parâmetros Configuráveis:</strong></p>
-      <p>• <strong>Níveis de PWM:</strong> Conjunto discreto de valores de amplitude que o sinal pode assumir. Em velocidade, aceita apenas valores positivos (<code>0 a 255</code>). Em posição, aceita valores bipolares (<code>-255 a 255</code>). Pode ser binário padrão (<code>0, 255</code> ou <code>-255, 255</code>) ou multi-nível (ex: <code>0, 128, 255, 55, 198</code>), onde cada nível é sorteado pseudo-aleatoriamente pelo LFSR.</p>
-      <p>• <strong>Ts (Período de Amostragem):</strong> Intervalo de tempo entre coletas consecutivas da planta (em ms). Valores menores aumentam a densidade de dados e a frequência de Nyquist (padrão: 5 ms).</p>
-      <p>• <strong>Stretch:</strong> Quantidade de amostras consecutivas que cada nível sorteado é sustentado. Aumentar o stretch reduz a frequência máxima do sinal, concentrando a energia nas dinâmicas mais lentas do motor (padrão: 5).</p>
-      <hr>
-      <p><strong>Parâmetros Operacionais Fixos da Planta:</strong></p>
-      <p>• <strong>Registrador LFSR:</strong> <code>14 bits</code>, gerando uma sequência pseudo-aleatória determinística completa de <code>16.383</code> estados antes de se repetir.</p>
-      <p>• <strong>Duração do Ensaio:</strong> Execução contínua em tempo real até a parada manual através do botão <em>Parar</em>.</p>
+      <p><strong>Parâmetros:</strong></p>
+      <p>• <strong>Níveis:</strong> Amplitudes de PWM (<code>0 a 255</code> em velocidade; <code>-255 a 255</code> em posição).</p>
+      <p>• <strong>Ts:</strong> Período de amostragem em ms (padrão: 5 ms).</p>
+      <p>• <strong>Stretch:</strong> Quantidade de amostras consecutivas por nível (padrão: 5).</p>
+      <p>• <strong>Seed:</strong> Semente inicial (inteiro positivo) para reprodutibilidade, ou aleatório via hardware TRNG.</p>
     `,
   },
 };
 
-/** Parseia string de níveis separados por vírgula em int[]. Valida limites do modo. */
+/** Verifica se a string é estritamente um único número inteiro dentro de [min, max]. */
+function isStrictInteger(str, min = -Infinity, max = Infinity) {
+  if (typeof str !== 'string' && typeof str !== 'number') return false;
+  const s = String(str).trim();
+  if (!s) return false;
+  if (s.includes(',') || s.includes('.')) return false;
+  if (!/^-?\d+$/.test(s)) return false;
+  const n = Number(s);
+  if (!Number.isSafeInteger(n)) return false;
+  return n >= min && n <= max;
+}
+
+/** Parseia string de níveis separados por vírgula em int[]. Valida limites do modo e rejeita não-inteiros. */
 function parseLevels(str, measure) {
   const trimmed = (str ?? '').trim();
   if (!trimmed) return null;
@@ -55,8 +68,10 @@ function parseLevels(str, measure) {
   for (const p of parts) {
     const s = p.trim();
     if (s === '') return null;
+    // Rejeita decimais, caracteres ou texto
+    if (!/^-?\d+$/.test(s)) return null;
     const v = Number(s);
-    if (!Number.isInteger(v)) return null;
+    if (!Number.isSafeInteger(v)) return null;
     if (measure === 'speed') {
       if (v < 0 || v > 255) return null; // Apenas positivos / não-negativos em velocidade
     } else {
@@ -86,6 +101,7 @@ export class ConfigPanel {
     this.ts      = 5;
     this.stretch = 5;
     this.levels  = [0, 255];
+    this.seed    = 0;
     this.isValid = true;
   }
 
@@ -109,6 +125,14 @@ export class ConfigPanel {
     this._els.inputLevels?.addEventListener('input', () => this.validate());
     this._els.inputTs.addEventListener('input', () => this.validate());
     this._els.inputStretch.addEventListener('input', () => this.validate());
+    this._els.inputSeed?.addEventListener('input', () => this.validate());
+    this._els.checkboxSeedRandom?.addEventListener('change', () => {
+      const isRandom = this._els.checkboxSeedRandom.checked;
+      if (this._els.inputSeed) {
+        this._els.inputSeed.disabled = isRandom;
+      }
+      this.validate();
+    });
   }
 
   _onMeasureChange() {
@@ -128,9 +152,11 @@ export class ConfigPanel {
 
   _captureInputs() {
     return {
-      levels:  this._els.inputLevels?.value ?? '',
-      ts:      this._els.inputTs?.value ?? '5',
-      stretch: this._els.inputStretch?.value ?? '5',
+      levels:     this._els.inputLevels?.value ?? '',
+      ts:         this._els.inputTs?.value ?? '5',
+      stretch:    this._els.inputStretch?.value ?? '5',
+      seed:       this._els.inputSeed?.value ?? '1234',
+      seedRandom: this._els.checkboxSeedRandom?.checked ?? true,
     };
   }
 
@@ -138,28 +164,51 @@ export class ConfigPanel {
     if (this._els.inputLevels) this._els.inputLevels.value = state.levels;
     if (this._els.inputTs)     this._els.inputTs.value     = state.ts;
     if (this._els.inputStretch)this._els.inputStretch.value= state.stretch;
+    if (this._els.inputSeed)   this._els.inputSeed.value   = state.seed ?? '1234';
+    if (this._els.checkboxSeedRandom) {
+      this._els.checkboxSeedRandom.checked = state.seedRandom ?? true;
+      if (this._els.inputSeed) {
+        this._els.inputSeed.disabled = this._els.checkboxSeedRandom.checked;
+      }
+    }
   }
 
   validate() {
     const currentMeasure = this.measure;
     const parsedLevels = parseLevels(this._els.inputLevels?.value, currentMeasure);
-    const rawTs = parseInt(this._els.inputTs.value, 10);
-    const rawStretch = parseInt(this._els.inputStretch.value, 10);
+    
+    // Ts: estritamente inteiro entre 1 e 1000 ms (sem ponto, sem vírgula, sem negativo)
+    const isTsValid = isStrictInteger(this._els.inputTs?.value, 1, 1000);
+
+    // Stretch: estritamente inteiro >= 1 (sem ponto, sem vírgula, sem negativo, sem limite superior!)
+    const isStretchValid = isStrictInteger(this._els.inputStretch?.value, 1, Infinity);
+
+    // Seed: se não for aleatório, deve ser estritamente um inteiro positivo (>= 1)
+    const isRandom = this._els.checkboxSeedRandom?.checked ?? true;
+    let isSeedValid = true;
+    if (!isRandom) {
+      isSeedValid = isStrictInteger(this._els.inputSeed?.value, 1, 2147483647);
+    }
 
     const isLevelsValid = parsedLevels !== null;
-    const isTsValid = !isNaN(rawTs) && rawTs >= 1 && rawTs <= 1000;
-    const isStretchValid = !isNaN(rawStretch) && rawStretch >= 1 && rawStretch <= 100;
 
     if (this._els.inputLevels) this._els.inputLevels.classList.toggle('is-invalid', !isLevelsValid);
     this._els.inputTs.classList.toggle('is-invalid', !isTsValid);
     this._els.inputStretch.classList.toggle('is-invalid', !isStretchValid);
+    if (this._els.inputSeed)   this._els.inputSeed.classList.toggle('is-invalid', !isRandom && !isSeedValid);
 
-    this.isValid = isLevelsValid && isTsValid && isStretchValid;
+    if (this._els.tsWarning) {
+      const rawTs = parseInt(this._els.inputTs.value, 10);
+      this._els.tsWarning.hidden = !(isTsValid && rawTs < 5);
+    }
+
+    this.isValid = isLevelsValid && isTsValid && isStretchValid && isSeedValid;
 
     if (this.isValid) {
       this.levels  = parsedLevels;
-      this.ts      = rawTs;
-      this.stretch = rawStretch;
+      this.ts      = parseInt(this._els.inputTs.value, 10);
+      this.stretch = parseInt(this._els.inputStretch.value, 10);
+      this.seed    = isRandom ? 0 : parseInt(this._els.inputSeed.value, 10);
     }
 
     if (typeof this._onValidityChange === 'function') {
@@ -178,6 +227,7 @@ export class ConfigPanel {
       sample_time_ms: this.ts,
       stretch: this.stretch,
       levels: this.levels,
+      seed: this.seed,
     };
   }
 
@@ -190,18 +240,12 @@ export class ConfigPanel {
   }
 
   /** Atualiza o card de telemetria em tempo real no painel lateral */
-  updateStats(sampleCount, elapsedSec, lastU, lastY) {
+  updateStats(sampleCount, elapsedSec) {
     if (this._els.statSamples) {
       this._els.statSamples.textContent = sampleCount.toLocaleString('pt-BR');
     }
     if (this._els.statTime) {
       this._els.statTime.textContent = `${elapsedSec.toFixed(1)} s`;
-    }
-    if (this._els.statU) {
-      this._els.statU.textContent = lastU !== null ? lastU.toString() : '0';
-    }
-    if (this._els.statY) {
-      this._els.statY.textContent = lastY !== null ? lastY.toFixed(2) : '0.00';
     }
   }
 }
