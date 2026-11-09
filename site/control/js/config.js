@@ -13,6 +13,7 @@ const _DEFAULTS = {
     refMax:      '15',
     vecE:        '1',
     vecU:        '1',
+    ts:          '35',
   },
   position: {
     refType:     'internal',
@@ -22,6 +23,7 @@ const _DEFAULTS = {
     refMax:      '180',
     vecE:        '6.9, -6.8',
     vecU:        '1',
+    ts:          '35',
   },
 };
 
@@ -52,6 +54,15 @@ export const HELP_CONTENT = {
       <p><strong>Padrão Posição:</strong> Níveis <code>30, 90, 150, 100</code> (6 s) | Potenciômetro: <code>0</code> a <code>180</code> graus</p>
     `,
   },
+  ts: {
+    title: 'Taxa de Amostragem',
+    html: `
+      <p><strong>Ts (Período de Amostragem):</strong> Intervalo de tempo entre execuções consecutivas da malha de controle digital (em milissegundos). Padrão: <strong>35 ms</strong> (~28,6 Hz).</p>
+      <p><strong>Valores baixos (&lt; 5 ms):</strong> Elevam o ruído de quantização na medição de velocidade e geram arquivos CSV volumosos (até 1.000 amostras/s, podendo atingir o limite de 1 milhão de linhas do Excel em ensaios longos).</p>
+      <hr>
+      <p><strong>Atenção:</strong> Ao alterar <code>Ts</code>, certifique-se de que os coeficientes da equação de diferenças tenham sido discretizados para este mesmo período de amostragem.</p>
+    `,
+  },
   eq: {
     title: 'Equação de Diferenças',
     html: `
@@ -69,15 +80,48 @@ export const HELP_CONTENT = {
 
 // ---- Helpers de validação -------------------------------------------
 
-/** Parseia string "1.0, -2.5, 3" em float[]. Retorna null se inválido. */
-function parseVec(str) {
-  const s = str.trim();
-  if (!s) return [];
-  return s.split(',').reduce((acc, p) => {
-    if (acc === null) return null;
-    const v = parseFloat(p.trim());
-    return (isNaN(v) || p.trim() === '') ? null : [...acc, v];
-  }, []);
+/** Verifica se a string é estritamente um único número inteiro dentro de [min, max]. */
+function isStrictInteger(str, min = -Infinity, max = Infinity) {
+  if (typeof str !== 'string' && typeof str !== 'number') return false;
+  const s = String(str).trim();
+  if (!s) return false;
+  if (s.includes(',') || s.includes('.')) return false;
+  if (!/^-?\d+$/.test(s)) return false;
+  const n = Number(s);
+  if (!Number.isSafeInteger(n)) return false;
+  return n >= min && n <= max;
+}
+
+/** Verifica se a string é estritamente um único float dentro de [min, max]. */
+function isStrictFloat(str, min = -Infinity, max = Infinity) {
+  if (typeof str !== 'string' && typeof str !== 'number') return false;
+  const s = String(str).trim();
+  if (!s) return false;
+  if (s.includes(',')) return false;
+  if (!/^-?\d+(\.\d+)?$/.test(s)) return false;
+  const n = Number(s);
+  if (isNaN(n) || !isFinite(n)) return false;
+  return n >= min && n <= max;
+}
+
+/** Parseia string de números separados por vírgula em float[]. Retorna null se inválido. */
+function parseVec(str, allowEmpty = false, min = -Infinity, max = Infinity, maxCount = 20) {
+  const s = (str ?? '').trim();
+  if (!s) return allowEmpty ? [] : null;
+  const parts = s.split(',');
+  const result = [];
+  for (const p of parts) {
+    const trimmed = p.trim();
+    if (!trimmed) return null;
+    if (!/^-?\d+(\.\d+)?$/.test(trimmed)) return null;
+    const v = Number(trimmed);
+    if (isNaN(v) || !isFinite(v)) return null;
+    if (v < min || v > max) return null;
+    result.push(v);
+  }
+  if (!allowEmpty && result.length === 0) return null;
+  if (result.length > maxCount) return null;
+  return result;
 }
 
 /** Formata float com até 6 dígitos significativos. */
@@ -141,25 +185,7 @@ export class ConfigPanel {
   }
 
   get isValid() {
-    const e = parseVec(this._els.vecE.value);
-    const u = parseVec(this._els.vecU.value);
-    const eqOk = (
-      e !== null &&
-      u !== null &&
-      ((e?.length ?? 0) > 0 || (u?.length ?? 0) > 0)
-    );
-
-    if (this._refType === 'external') {
-      const min = parseFloat(this._els.refMin.value);
-      const max = parseFloat(this._els.refMax.value);
-      const extOk = !isNaN(min) && !isNaN(max) && min < max;
-      return eqOk && extOk;
-    } else {
-      const l = parseVec(this._els.refLevels.value);
-      const iv = parseInt(this._els.refInterval.value, 10);
-      const intOk = l !== null && l.length > 0 && !isNaN(iv) && iv >= 1;
-      return eqOk && intOk;
-    }
+    return this._isValidState ?? false;
   }
 
   /** Retorna payload JSON pronto para envio à ESP32. */
@@ -171,17 +197,19 @@ export class ConfigPanel {
 
     const minVal = parseFloat(this._els.refMin.value);
     const maxVal = parseFloat(this._els.refMax.value);
+    const rawTs  = parseInt(this._els.ctrlTs?.value, 10);
 
     return {
-      mode:       this.mode,
-      ref_type:   this._refType,
-      ref_min:    isNaN(minVal) ? 0.0 : minVal,
-      ref_max:    isNaN(maxVal) ? 15.0 : maxVal,
+      mode:           this.mode,
+      sample_time_ms: isNaN(rawTs) ? 35 : rawTs,
+      ref_type:       this._refType,
+      ref_min:        isNaN(minVal) ? 0.0 : minVal,
+      ref_max:        isNaN(maxVal) ? 15.0 : maxVal,
       order,
-      coeff_e:    Array.from({ length: order }, (_, i) => eArr[i] ?? 0),
-      coeff_u:    Array.from({ length: order }, (_, i) => uArr[i] ?? 0),
-      levels:     parseVec(this._els.refLevels.value),
-      interval_s: parseInt(this._els.refInterval.value, 10),
+      coeff_e:        Array.from({ length: order }, (_, i) => eArr[i] ?? 0),
+      coeff_u:        Array.from({ length: order }, (_, i) => uArr[i] ?? 0),
+      levels:         parseVec(this._els.refLevels.value),
+      interval_s:     parseInt(this._els.refInterval.value, 10),
     };
   }
 
@@ -254,6 +282,9 @@ export class ConfigPanel {
       this._modeState[mode].refMax      = def.refMax;
 
       this.setRefType('internal');
+    } else if (group === 'ts') {
+      if (this._els.ctrlTs) this._els.ctrlTs.value = def.ts;
+      this._modeState[mode].ts = def.ts;
     } else if (group === 'eq') {
       this._els.vecE.value = def.vecE;
       this._els.vecU.value = def.vecU;
@@ -273,9 +304,9 @@ export class ConfigPanel {
   // ---- Métodos internos -----------------------------------------------
 
   _bind() {
-    const { vecE, vecU, refLevels, refInterval, refMin, refMax, btnRefInternal, btnRefExternal } = this._els;
+    const { vecE, vecU, ctrlTs, refLevels, refInterval, refMin, refMax, btnRefInternal, btnRefExternal } = this._els;
 
-    [vecE, vecU, refLevels, refInterval, refMin, refMax].forEach(el => {
+    [vecE, vecU, ctrlTs, refLevels, refInterval, refMin, refMax].filter(Boolean).forEach(el => {
       el.addEventListener('input', () => {
         this._updateGaugeScaleLabels();
         this._validate();
@@ -311,6 +342,7 @@ export class ConfigPanel {
       refMax:      this._els.refMax.value,
       vecE:        this._els.vecE.value,
       vecU:        this._els.vecU.value,
+      ts:          this._els.ctrlTs?.value ?? '35',
     };
   }
 
@@ -321,6 +353,7 @@ export class ConfigPanel {
     this._els.refMax.value      = state.refMax;
     this._els.vecE.value        = state.vecE;
     this._els.vecU.value        = state.vecU;
+    if (this._els.ctrlTs) this._els.ctrlTs.value = state.ts ?? '35';
 
     const unit = UNIT_LABELS[this.mode];
     this._els.refUnit.textContent    = unit;
@@ -341,28 +374,63 @@ export class ConfigPanel {
   }
 
   _validate() {
-    const eArr = parseVec(this._els.vecE.value);
-    const uArr = parseVec(this._els.vecU.value);
-    const eEmpty = this._els.vecE.value.trim() === '';
+    const isSpeed = this.mode === 'speed';
 
-    this._setErr(this._els.vecE, eArr === null || eEmpty);
-    this._setErr(this._els.vecU, uArr === null);
-
-    if (this._refType === 'external') {
-      const min = parseFloat(this._els.refMin.value);
-      const max = parseFloat(this._els.refMax.value);
-      const err = isNaN(min) || isNaN(max) || min >= max;
-      this._setErr(this._els.refMin, err);
-      this._setErr(this._els.refMax, err);
-    } else {
-      const lArr = parseVec(this._els.refLevels.value);
-      const iv   = parseInt(this._els.refInterval.value, 10);
-      this._setErr(this._els.refLevels,  lArr === null || lArr.length === 0);
-      this._setErr(this._els.refInterval, isNaN(iv) || iv < 1);
+    // 1. Ts: inteiro estrito entre 1 e 1000 ms (sem ponto, sem vírgula, sem negativo)
+    const isTsValid = isStrictInteger(this._els.ctrlTs?.value, 1, 1000);
+    if (this._els.ctrlTs) this._setErr(this._els.ctrlTs, !isTsValid);
+    if (this._els.tsWarning) {
+      const rawTs = parseInt(this._els.ctrlTs?.value, 10);
+      this._els.tsWarning.hidden = !isTsValid || rawTs >= 5;
     }
 
+    // 2. Coeficientes e[]: lista de floats, não vazia, até 10 elementos
+    const eArr = parseVec(this._els.vecE.value, false, -Infinity, Infinity, 10);
+    const isEValid = eArr !== null && eArr.length > 0;
+    this._setErr(this._els.vecE, !isEValid);
+
+    // 3. Coeficientes u[]: lista de floats, pode ser vazia, até 10 elementos
+    const uArr = parseVec(this._els.vecU.value, true, -Infinity, Infinity, 10);
+    const isUValid = uArr !== null;
+    this._setErr(this._els.vecU, !isUValid);
+
+    let isRefValid = false;
+
+    if (this._refType === 'external') {
+      // 4. Ref Externa: refMin e refMax devem ser floats únicos.
+      // Em velocidade, refMin e refMax NÃO PODEM ser negativos (>= 0).
+      // Em posição, podem ser negativos.
+      const minLimit = isSpeed ? 0 : -Infinity;
+      const isMinValid = isStrictFloat(this._els.refMin.value, minLimit, Infinity);
+      const isMaxValid = isStrictFloat(this._els.refMax.value, minLimit, Infinity);
+
+      const minVal = parseFloat(this._els.refMin.value);
+      const maxVal = parseFloat(this._els.refMax.value);
+      const isRangeValid = isMinValid && isMaxValid && (minVal < maxVal);
+
+      this._setErr(this._els.refMin, !isMinValid || !isRangeValid);
+      this._setErr(this._els.refMax, !isMaxValid || !isRangeValid);
+
+      isRefValid = isMinValid && isMaxValid && isRangeValid;
+    } else {
+      // 5. Ref Interna:
+      // refLevels: lista de floats. Em velocidade NÃO PODE ter negativos (>= 0).
+      const levelsLimit = isSpeed ? 0 : -Infinity;
+      const lArr = parseVec(this._els.refLevels.value, false, levelsLimit, Infinity, 20);
+      const isLevelsValid = lArr !== null && lArr.length > 0;
+      this._setErr(this._els.refLevels, !isLevelsValid);
+
+      // refInterval: inteiro estrito >= 1 s (sem ponto, sem vírgula, sem negativo)
+      const isIntervalValid = isStrictInteger(this._els.refInterval.value, 1, Infinity);
+      this._setErr(this._els.refInterval, !isIntervalValid);
+
+      isRefValid = isLevelsValid && isIntervalValid;
+    }
+
+    this._isValidState = isTsValid && isEValid && isUValid && isRefValid;
+
     this._renderKatex(eArr, uArr);
-    this._onValidChange(this.isValid);
+    this._onValidChange(this._isValidState);
   }
 
   _setErr(el, isErr) { el.classList.toggle('is-invalid', isErr); }
