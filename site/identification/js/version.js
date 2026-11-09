@@ -2,11 +2,11 @@
 // version.js — consulta de versão/commit via GitHub API e rodapé
 // ============================================================
 
-const CACHE_KEY = 'lca2_version_cache_v1';
+const CACHE_KEY = 'lab_ctrl_version_cache_v2';
 const CACHE_TTL_MS = 60 * 60 * 1000; // 60 minutos de cache
 
 const REPO_OWNER = 'celiobenj';
-const REPO_NAME  = 'motor-control-lca2';
+const REPO_NAME  = 'lab-ctrl';
 const REPO_URL   = `https://github.com/${REPO_OWNER}/${REPO_NAME}`;
 
 /**

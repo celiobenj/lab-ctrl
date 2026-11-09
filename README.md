@@ -1,53 +1,62 @@
-# LCA2 - Controle de Motor
+# lab-ctrl — Laboratório de Controle
 
-Sistema de controle digital em malha fechada para motor DC com encoder acoplado, usando o dual-core da ESP32 via FreeRTOS, com sintonia remota e plotagem gráfica em tempo real no navegador via Web Serial API.
+Plataforma integrada de hardware e software para ensaios experimentais e aplicações práticas de Laboratório de Controle. Conecta plantas didáticas (motores DC, encoders de quadratura e sensores) diretamente ao navegador através da **Web Serial API** em alta velocidade (460.800 baud), permitindo controle digital em malha fechada, identificação dinâmica de sistemas e telemetria gráfica em tempo real.
 
-- **Deploy da Aplicação**: https://lca2-motor.vercel.app/
-- **Repositório**: https://github.com/celiobenj/motor-control-lca2
+- **Hub Central (Portal de Serviços)**: https://lab-ctrl.vercel.app/
+- **Módulo de Controle do Motor**: https://lab-ctrl-motor.vercel.app/
+- **Módulo de Identificação de Sistemas**: https://lab-ctrl-identification.vercel.app/
+- **Repositório GitHub**: https://github.com/celiobenj/lab-ctrl
 
 ---
 
-## Visão Geral
+## Módulos e Funcionalidades
 
-O projeto permite sintonizar controladores por equação de diferenças (ordem 1 a 10) para controle de velocidade angular (rad/s) ou posição angular (graus) sem necessidade de reprogramar o microcontrolador.
+### 1. Módulo de Controle (`/control`)
+- **Controle Digital por Equação de Diferenças**: Suporte a controladores discretos lineares de ordem 1 a 10 ($C(z)$), sintonizados remotamente sem necessidade de reprogramar o microcontrolador.
+- **Grandezas de Controle**:
+  - **Velocidade Angular**: malha fechada em rad/s com medição por contagem periódica de pulsos.
+  - **Posição Angular**: malha fechada com medição de ângulo absoluto em radianos/graus.
+- **Período de Amostragem ($T_s$) Configurável**: Período de execução do controlador ajustável dinamicamente (1 a 1000 ms, padrão 35 ms) com aviso de alta taxa de dados para $T_s < 5\text{ ms}$.
+- **Fontes de Referência**:
+  - **Interna**: Sequência cíclica de degraus de amplitude e intervalo configuráveis.
+  - **Externa**: Leitura analógica em tempo real via potenciômetro (ADC1, pino 34), com mapeamento linear e gauge visual.
+- **Visualização Gráfica Temporal**: Gráficos de referência vs. medição e esforço de controle ($u$ em PWM) com janelas deslizantes ajustáveis (0.5 s, 1 s, 5 s, 15 s, 30 s, 60 s ou tudo), cursores duplos e exportação CSV.
 
-### Modos de Referência
-- **Interna**: Sequência cíclica de degraus com intervalo ajustável em segundos.
-- **Externa**: Leitura analógica do potenciômetro, mapeada linearmente entre limites mínimo e máximo configuráveis.
-
-### Visualização Gráfica
-A interface dispõe de dois gráficos sincronizados no tempo, com suporte a pausa e janelas deslizantes (5 s, 15 s, 30 s, 1 min ou tudo):
-- **Referência / Medição**: Sobrepõe o sinal de referência desejado à resposta real medida pelo encoder (velocidade em rad/s ou posição em graus), facilitando a análise de erro em regime transitório e permanente.
-- **Sinal de Controle ($u$)**: Mostra o esforço de controle calculado pela equação de diferenças e entregue ao driver em PWM (0 a 255 para velocidade e -255 a 255 para posição), permitindo acompanhar a saturação do atuador.
+### 2. Módulo de Identificação de Sistemas (`/identification`)
+- **Excitação Pseudoaleatória de Alta Qualidade (Xoshiro128++)**:
+  - Substitui geradores clássicos LFSR com viés de módulo por um algoritmo PRNG moderno com período de $2^{128}-1 \approx 3.4 \times 10^{38}$ números e aprovação formal em testes estatísticos Qui-Quadrado ($\chi^2$).
+  - **Mapeamento Uniforme**: Distribuição equiprovável rigorosa entre múltiplos níveis de PWM através de produto de ponto fixo em 64 bits (sem viés de módulo).
+  - **Controle de Semente (Seed)**: Modo aleatório com entropia do gerador de ruído térmico/RF de hardware da ESP32 (`esp_random()`), ou semente positiva fixa expandida via SplitMix64 para ensaios reprodutíveis.
+- **Configurações de Ensaio**: Período de amostragem ($T_s$), parâmetro `stretch` (sustentação de amostras por nível) e níveis de PWM bipolares ou unipolares.
+- **Exportação de Dados**: Geração de séries temporais limpas em CSV prontas para identificação paramétrica (ARX, ARMAX, Box-Jenkins, subespaço) no MATLAB, Python ou Octave.
 
 ---
 
 ## Arquitetura e Tecnologias
 
-- **Microcontrolador**: ESP32 (Xtensa Dual-Core) no framework Arduino / PlatformIO.
-- **FreeRTOS Dual-Core**:
-  - **Núcleo 0 (`serial_comm_task`)**: Leitura serial contínua (115200 baud), processamento de comandos JSON e transmissão de telemetria.
-  - **Núcleo 1 (`controller_task`)**: Execução a cada 35 ms, máquina de estados finita (IDLE, RUNNING, STOPPING), cálculo da equação de diferenças e modulação PWM a 5 kHz no driver L298N.
-  - **Filas FreeRTOS (Queues)**: Troca assíncrona e thread-safe de eventos e dados de telemetria entre núcleos.
-- **Frontend (`site/`)**:
-  - HTML5, CSS3 responsivo e JavaScript nativo via ES Modules.
-  - **Web Serial API** para comunicação direta com a porta USB.
-  - **Chart.js** para visualização gráfica temporal com janelas deslizantes (5 s, 15 s, 30 s, 1 min, tudo).
-  - **KaTeX** para renderização da equação matemática em tempo real.
-  - Exportação de dados da série temporal em formato CSV.
+- **Microcontrolador**: ESP32 (Xtensa Dual-Core 240 MHz) programado no framework Arduino / PlatformIO.
+- **Arquitetura FreeRTOS Dual-Core**:
+  - **Núcleo 0 (`serial_comm_task`)**: Leitura serial contínua a 460.800 baud, parser JSON, filtragem de ruído, comando de parada de emergência prioritário (`'s'`) e transmissão não-bloqueante de telemetria.
+  - **Núcleo 1 (`controller_task`)**: FSM determinística (IDLE, RUNNING, STOPPING, IDENT), amostragem precisa no período $T_s$ configurado, equação de diferenças e modulação PWM em 5 kHz no driver L298N.
+  - **Filas FreeRTOS (`QueueHandle_t`)**: Barramento thread-safe para envio assíncrono de comandos e pacotes de telemetria entre núcleos com esvaziamento imediato ao reiniciar ensaios.
+- **Interrupções do Encoder (`encoder_isr.cpp`)**: Leitura em quadratura em pinos dedicados, restrita a operações inteiras atômicas para eliminar sobrecarga na CPU e desvio temporal.
+- **Frontend Web**:
+  - HTML5 moderno, CSS3 responsivo e JavaScript modular nativo (ES Modules).
+  - **Web Serial API** para comunicação direta com a porta serial USB a 460.800 baud.
+  - **Chart.js** com renderização gráfica por Canvas e janelas de visualização customizáveis.
+  - **KaTeX** para renderização matemática da equação de diferenças em tempo real.
 
 ---
 
-## Formato de Comunicação
+## Formato de Comunicação Serial
 
-A comunicação serial ocorre a 115200 de baudrate com linhas terminadas em `\n`.
+A comunicação ocorre a **460.800 de baudrate** (8-N-1) com comandos JSON delimitados por `\n`.
 
-### 1. Configuração e Controle (Navegador -> ESP32)
-Para iniciar ou atualizar os parâmetros de controle, o frontend envia para a ESP32 uma linha com o seguinte JSON:
-
+### 1. Iniciar Controle em Malha Fechada (Navegador -> ESP32)
 ```json
 {
   "mode": "speed",
+  "sample_time_ms": 35,
   "ref_type": "internal",
   "ref_min": 0.0,
   "ref_max": 15.0,
@@ -59,27 +68,31 @@ Para iniciar ou atualizar os parâmetros de controle, o frontend envia para a ES
 }
 ```
 
-- `mode`: Modo de controle (`"speed"` para rad/s ou `"position"` para graus).
-- `ref_type`: Tipo de referência (`"internal"` para degraus ou `"external"` para potenciômetro).
-- `ref_min` / `ref_max`: Limites de mapeamento da referência externa do potenciômetro.
-- `order`: Ordem do controlador (tamanho dos vetores de coeficientes, até 10).
-- `coeff_e`: Coeficientes do erro $[e[k], e[k-1], \dots]$.
-- `coeff_u`: Coeficientes do sinal de controle anterior $[u[k-1], u[k-2], \dots]$.
-- `levels`: Vetor com os níveis da referência cíclica (usado em modo interno).
-- `interval_s`: Duração de cada nível da referência interna em segundos.
+### 2. Iniciar Identificação de Sistemas (Navegador -> ESP32)
+```json
+{
+  "cmd": "ident",
+  "measure": "speed",
+  "sample_time_ms": 5,
+  "stretch": 5,
+  "levels": [0, 128, 255],
+  "seed": 0
+}
+```
+- `seed`: `0` para semente aleatória gerada por ruído de hardware da ESP32, ou inteiro positivo $\ge 1$ para semente determinística.
 
-Comandos de controle adicionais:
-- `{"cmd":"stop"}`: Interrompe o motor imediatamente e redefine o controlador para o estado IDLE.
-- `{"cmd":"ping"}`: Handshake de verificação da conexão serial.
-- `{"cmd":"reset_time"}`: Reinicia a contagem de tempo ($t = 0\text{ ms}$) da telemetria.
+### 3. Comandos Adicionais de Operação
+- `{"cmd":"stop"}` ou envio do caractere único `'s'` / `'S'`: Parada imediata do motor, reset das filas de telemetria e retorno da FSM para o estado IDLE.
+- `{"cmd":"ping"}`: Verificação de conectividade e handshake serial (retorna `{"status":"ok"}`).
+- `{"cmd":"reset_time"}`: Reinicia a base temporal ($t = 0\text{ ms}$) e esvazia amostras residuais da fila.
 
-### 2. Telemetria (ESP32 -> Navegador)
-Transmitida em padrão [Teleplot](https://teleplot.fr/) linha a linha:
-- `>t:<valor>`: Tempo decorrido em milissegundos desde o início do ensaio.
-- `>ref:<valor>`: Valor atual da referência.
-- `>omega:<valor>` ou `>angulo:<valor>`: Medição atual do encoder (velocidade ou posição).
-- `>u:<valor>`: Sinal de controle calculado (PWM de 0 a 255 em velocidade, -255 a 255 em posição).
-- `>pot:<valor>`: Valor normalizado da leitura do potenciômetro (0.0000 a 1.0000).
+### 4. Telemetria (ESP32 -> Navegador)
+Linhas de texto em padrão [Teleplot](https://teleplot.fr/):
+- `>t:<ms>`: Timestamp em milissegundos decorridos desde o início do ensaio.
+- `>ref:<valor>`: Valor instantâneo da referência.
+- `>omega:<rad/s>` ou `>angulo:<rad>`: Medição atual da planta via encoder.
+- `>u:<pwm>`: Sinal de controle calculado e aplicado ao motor.
+- `>pot:<0.0 a 1.0>`: Leitura normalizada do potenciômetro (taxa controlada a cada 50 ms).
 
 ---
 
@@ -87,22 +100,39 @@ Transmitida em padrão [Teleplot](https://teleplot.fr/) linha a linha:
 
 ```text
 motor_control_serial/
-|-- src/                 # Implementação das tarefas de firmware FreeRTOS, FSM e interrupções
-|-- include/             # Cabeçalhos do firmware (configurações, FSM e tarefas)
+|-- src/                     # Tarefas de firmware FreeRTOS, FSM, ISRs e comunicação serial
+|   |-- main.cpp             # Ponto de entrada e criação das tarefas/filas FreeRTOS
+|   |-- controller.cpp       # Lógica da FSM de controle e identificação no Núcleo 1
+|   |-- serial_comm.cpp      # Leitura, parsing JSON e envio de telemetria no Núcleo 0
+|   `-- encoder_isr.cpp      # Rotinas de interrupção em quadratura otimizadas
+|-- include/                 # Definições de tipos, parâmetros e geradores
+|   |-- config.h             # Definição de pinos, baudrate e limites
+|   |-- fsm.h                # Estados da FSM, estruturas de eventos e telemetria
+|   |-- controller.h         # Declaração do controlador e loop principal
+|   |-- serial_comm.h        # Declaração da tarefa serial
+|   |-- encoder_isr.h        # Declaração das ISRs do encoder
+|   `-- prng.h               # Gerador Xoshiro128++ e SplitMix64
 |-- lib/
-|   |-- Motor/           # Acionamento e modulação PWM do motor
-|   `-- Encoder/         # Conversão de pulsos de quadratura
-|-- site/
-|   |-- css/             # Estilos da interface
-|   |-- js/              # Módulos JavaScript (Web Serial, gráficos, KaTeX)
-|   `-- index.html       # Interface gráfica de usuário
-|-- platformio.ini       # Configuração de build para ESP32
-|-- LICENSE              # Licença MIT
-`-- README.md            # Documentação do projeto
+|   |-- Motor/               # Driver de modulação PWM L298N
+|   `-- Encoder/             # Classe de conversão de pulsos de quadratura
+|-- site/                    # Aplicação Web (Portal e Módulos)
+|   |-- index.html           # Portal / Hub Central de serviços
+|   |-- favicon.svg          # Ícone visual da plataforma
+|   |-- control/             # Módulo Web de Controle do Motor
+|   |   |-- index.html       # Interface do usuário para controle
+|   |   |-- css/             # Estilos do módulo de controle
+|   |   `-- js/              # Web Serial, gráficos, validadores e renderização
+|   `-- identification/      # Módulo Web de Identificação de Sistemas
+|       |-- index.html       # Interface do usuário para identificação
+|       |-- css/             # Estilos do módulo de identificação
+|       `-- js/              # Web Serial, gráficos e validação do sinal de excitação
+|-- platformio.ini           # Configuração de build para ESP32 Dev Module
+|-- LICENSE                  # Licença MIT
+`-- README.md                # Documentação técnica do projeto
 ```
 
 ---
 
 ## Licença
 
-Distribuído sob a licença [MIT](https://opensource.org/license/mit). Consulte o arquivo [LICENSE](LICENSE) para mais informações.
+Distribuído sob a licença [MIT](https://opensource.org/license/mit). Consulte o arquivo [LICENSE](LICENSE) para mais detalhes.
