@@ -1,16 +1,18 @@
 // ============================================================
 /// @file encoder_isr.cpp
-/// @brief Implementacao das rotinas de interrupcao do encoder.
+/// @brief Implementacao otimizada das rotinas de interrupcao do encoder.
+///        Nao utiliza operacoes de ponto flutuante dentro das ISRs para
+///        evitar context switch de registradores FPU e gargalo de CPU.
 // ============================================================
 
 #include "encoder_isr.h"
 
 static Encoder*     _enc        = nullptr;
 static signed long  _pontoAtual = 0;   ///< Posicao acumulada em pulsos
-static float        _anguloRad  = 0.0; ///< Angulo em radianos
 
 // -------------------------------------------------------
 /// @brief ISR chamada nas transicoes de nivel do canal A.
+///        Apenas operacoes inteiras atomicas de contagem.
 // -------------------------------------------------------
 static void IRAM_ATTR _isr_canal_A() {
     if (digitalRead(ENC_A) == HIGH) {
@@ -20,11 +22,11 @@ static void IRAM_ATTR _isr_canal_A() {
         (digitalRead(ENC_B) == HIGH) ? (_pontoAtual++, _enc->pulses_motor++)
                                      : (_pontoAtual--, _enc->pulses_motor--);
     }
-    _anguloRad = TWO_PI * _pontoAtual / _enc->ENC_COUNT_REV;
 }
 
 // -------------------------------------------------------
 /// @brief ISR chamada nas transicoes de nivel do canal B.
+///        Apenas operacoes inteiras atomicas de contagem.
 // -------------------------------------------------------
 static void IRAM_ATTR _isr_canal_B() {
     if (digitalRead(ENC_B) == HIGH) {
@@ -34,7 +36,6 @@ static void IRAM_ATTR _isr_canal_B() {
         (digitalRead(ENC_A) == LOW) ? (_pontoAtual++, _enc->pulses_motor++)
                                     : (_pontoAtual--, _enc->pulses_motor--);
     }
-    _anguloRad = TWO_PI * _pontoAtual / _enc->ENC_COUNT_REV;
 }
 
 // -------------------------------------------------------
@@ -48,14 +49,18 @@ void encoder_isr_init(Encoder* enc) {
 }
 
 float encoder_get_angle_rad() {
-    return _anguloRad;
+    if (_enc == nullptr || _enc->ENC_COUNT_REV == 0) return 0.0f;
+    // O calculo do angulo em radianos e executado apenas quando solicitado pelo laco de controle,
+    // eliminando dezenas de milhares de divisoes float por segundo dentro das ISRs.
+    return (float)(TWO_PI * _pontoAtual) / (float)_enc->ENC_COUNT_REV;
 }
 
 void encoder_reset() {
     noInterrupts();
-    _pontoAtual                 = 0;
-    _anguloRad                  = 0.0;
-    _enc->pulses_motor          = 0;
-    _enc->ActualPoint_enc_motor = 0;
+    _pontoAtual = 0;
+    if (_enc != nullptr) {
+        _enc->pulses_motor          = 0;
+        _enc->ActualPoint_enc_motor = 0;
+    }
     interrupts();
 }
