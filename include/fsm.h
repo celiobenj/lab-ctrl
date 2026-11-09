@@ -49,7 +49,8 @@ enum FsmEventType {
 /// @brief Parametros de sintonia e referencia.
 // -------------------------------------------------------
 struct ControlParams {
-    ControlMode mode       = MODE_NONE;
+    ControlMode mode         = MODE_NONE;
+    int         sampleTimeMs = SAMPLE_TIME_MS; ///< Periodo de amostragem do controlador em ms (padrao 35 ms)
     RefType     refType    = REF_INTERNAL;
     float       refMin     = 0.0f;        ///< Limite minimo para mapeamento do potenciometro
     float       refMax     = 15.0f;       ///< Limite maximo para mapeamento do potenciometro
@@ -68,6 +69,7 @@ struct IdentParams {
     bool        measureSpeed = true;      ///< true = velocidade (rad/s), false = posicao (rad)
     int         sampleTimeMs = 5;         ///< Periodo de amostragem em ms
     uint16_t    stretch      = 5;         ///< Stretch do PRBS (amostras/nivel)
+    uint32_t    seed         = 0;         ///< Semente: 0 = aleatorio (hardware TRNG), >0 = fixa
     int         levels[MAX_LEVELS] = {};  ///< Niveis de excitacao PWM configurados
     int         levelCount   = 0;         ///< Quantidade de niveis
 };
