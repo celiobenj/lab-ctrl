@@ -5,7 +5,7 @@
 
 #include "controller.h"
 #include "encoder_isr.h"
-#include "prbs.h"
+#include "prng.h"
 
 static Motor*         _motor       = nullptr;
 static Encoder*       _encoder     = nullptr;
@@ -15,8 +15,8 @@ static QueueHandle_t  _qPlot       = nullptr;
 static FsmState       _state       = STATE_IDLE;
 static ControlParams  _params;
 static IdentParams    _identParams;
-static uint16_t       _prbsReg          = 0x2A5B; ///< Registrador LFSR do PRBS (nao nulo)
-static uint16_t       _prbsStretchCount = 0;
+static Xoshiro128PlusPlus _prng;
+static uint16_t           _prbsStretchCount = 0;
 static int            _currentIdentPwm  = 0;
 
 static float          _e_hist[MAX_ORDER + 1] = {}; ///< e[k], e[k-1], ...
@@ -24,9 +24,9 @@ static float          _u_hist[MAX_ORDER + 1] = {}; ///< u[k-1], u[k-2], ...
 
 static int            _refIndex    = 0;
 static float          _currentRef  = 0.0;
-static unsigned long  _timerRef    = 0;
-static unsigned long  _tInicio     = 0;  ///< Momento em ms em que o ensaio atual iniciou
-unsigned long         timer        = 0;
+static unsigned long  _timerRef     = 0;
+static unsigned long  _tInicio      = 0;  ///< Momento em ms em que o ensaio atual iniciou
+static unsigned long  timer         = 0;
 
 
 // -------------------------------------------------------
@@ -45,9 +45,12 @@ static void _reset_state() {
     } else {
         _currentRef = (_params.levelCount > 0) ? _params.levels[0] : 0.0f;
     }
-    _timerRef   = millis();
-    _tInicio    = millis();
-    timer       = _tInicio;
+    if (_qPlot != nullptr) {
+        xQueueReset(_qPlot);
+    }
+    _timerRef     = millis();
+    _tInicio      = millis();
+    timer         = _tInicio;
 }
 
 // -------------------------------------------------------
@@ -81,36 +84,46 @@ FsmState controller_get_state() {
 
 void controller_task(void* pvParameters) {
     (void)pvParameters;
-    TickType_t xLastWakeTime = xTaskGetTickCount();
     unsigned long idlePotTimer = 0;
 
     for (;;) {
         // --- Processamento de eventos recebidos da fila ---
+        // Se estiver IDLE, aguarda ate 10 ms por eventos.
+        // Se estiver rodando (RUNNING ou IDENT), aguarda ate 1 ms (1 tick)
+        // para nao bloquear a amostragem, mas acordar IMEDIATAMENTE quando
+        // um comando de parada (EVT_STOP) ou reconfiguracao chegar.
+        TickType_t waitTicks = (_state == STATE_IDLE) ? pdMS_TO_TICKS(10) : pdMS_TO_TICKS(1);
+
         FsmEventMessage msg;
-        while (xQueueReceive(_qEvents, &msg, 0) == pdPASS) {
-            if (msg.type == EVT_APPLY) {
-                _params = msg.params;
-                _motor->setSpeed(0);
-                _reset_state();
-                _state = STATE_RUNNING;
-                xLastWakeTime = xTaskGetTickCount();
-            } else if (msg.type == EVT_IDENT) {
-                _identParams = msg.identParams;
-                _motor->setSpeed(0);
-                _reset_state();
-                _prbsReg          = 0x2A5B;
-                _prbsStretchCount = _identParams.stretch; // Forca selecao do primeiro nivel no primeiro tick
-                _currentIdentPwm  = (_identParams.levelCount > 0) ? _identParams.levels[0] : 0;
-                _state = STATE_IDENT;
-                _tInicio = millis();
-                timer    = _tInicio;
-                xLastWakeTime = xTaskGetTickCount();
-            } else if (msg.type == EVT_STOP) {
-                _state = STATE_STOPPING;
-            } else if (msg.type == EVT_RESET_TIME) {
-                _tInicio = millis();
-                timer    = _tInicio;
-            }
+        if (xQueueReceive(_qEvents, &msg, waitTicks) == pdPASS) {
+            do {
+                if (msg.type == EVT_APPLY) {
+                    _params = msg.params;
+                    _motor->setSpeed(0);
+                    _reset_state();
+                    _state = STATE_RUNNING;
+                } else if (msg.type == EVT_IDENT) {
+                    _identParams = msg.identParams;
+                    _motor->setSpeed(0);
+                    _reset_state();
+                    _prng.seed(_identParams.seed);
+                    _prbsStretchCount = _identParams.stretch; // Forca selecao do primeiro nivel no primeiro tick
+                    _currentIdentPwm  = 0;
+                    _state = STATE_IDENT;
+                    _tInicio = millis();
+                    timer    = _tInicio;
+                } else if (msg.type == EVT_STOP) {
+                    _motor->setSpeed(0);
+                    _reset_state();
+                    _state = STATE_IDLE;
+                } else if (msg.type == EVT_RESET_TIME) {
+                    if (_qPlot != nullptr) {
+                        xQueueReset(_qPlot);
+                    }
+                    _tInicio      = millis();
+                    timer         = _tInicio;
+                }
+            } while (xQueueReceive(_qEvents, &msg, 0) == pdPASS);
         }
 
         // --- Maquina de Estados (FSM) ---
@@ -134,7 +147,6 @@ void controller_task(void* pvParameters) {
                         xQueueSend(_qPlot, &sample, 0);
                     }
                 }
-                vTaskDelay(pdMS_TO_TICKS(10));
                 break;
             }
 
@@ -145,8 +157,9 @@ void controller_task(void* pvParameters) {
                 break;
 
             case STATE_RUNNING: {
-                if (millis() - timer >= SAMPLE_TIME_MS) {
-                    unsigned long now = millis();
+                unsigned long now = millis();
+                if (now - timer >= (unsigned long)_params.sampleTimeMs) {
+                    timer = now;
 
                     // Leitura do potenciometro em tempo real
                     float potNorm = constrain((float)analogRead(POT_PIN) / 4095.0f, 0.0f, 1.0f);
@@ -173,7 +186,7 @@ void controller_task(void* pvParameters) {
                     // Medicao e calculo do erro atual
                     float medida = 0.0f;
                     if (_params.mode == MODE_SPEED) {
-                        medida     = _encoder->get_omega(SAMPLE_TIME_MS);
+                        medida     = _encoder->get_omega(_params.sampleTimeMs);
                         _e_hist[0] = _currentRef - medida;
                     } else {
                         medida     = encoder_get_angle_rad() * RAD_TO_DEG;
@@ -200,7 +213,7 @@ void controller_task(void* pvParameters) {
                     _u_hist[0] = u_hist_val;
                     _motor->setSpeed(pwm_out);
 
-                    // Enfileira amostra para telemetria sem bloquear
+                    // Enfileira cada amostra calculada de acordo com o Ts configurado
                     if (_qPlot != nullptr) {
                         PlotSample sample;
                         sample.t_ms          = now - _tInicio;
@@ -213,24 +226,20 @@ void controller_task(void* pvParameters) {
                         sample.isIdentSample = false;
                         xQueueSend(_qPlot, &sample, 0);
                     }
-                    timer = millis();
                 }
                 break;
             }
 
             case STATE_IDENT: {
-                if (millis() - timer >= (unsigned long)_identParams.sampleTimeMs) {
-                    unsigned long now = millis();
+                unsigned long now = millis();
+                if (now - timer >= (unsigned long)_identParams.sampleTimeMs) {
+                    timer = now;
 
-                    // Sorteio pseudo-aleatorio do nivel a cada expiracao do stretch
+                    // Sorteio pseudo-aleatorio uniforme do nivel a cada expiracao do stretch (Xoshiro128++)
                     if (_prbsStretchCount >= _identParams.stretch) {
                         _prbsStretchCount = 0;
-                        uint16_t mask = (1 << 14) - 1;
-                        uint16_t comp = (_prbsReg ^ (_prbsReg >> 1)) & 1;
-                        _prbsReg = ((_prbsReg >> 1) | (comp << (14 - 1))) & mask;
-
                         if (_identParams.levelCount > 0) {
-                            int idx = _prbsReg % _identParams.levelCount;
+                            int idx = _prng.nextRange(_identParams.levelCount);
                             _currentIdentPwm = _identParams.levels[idx];
                         }
                     } else {
@@ -248,7 +257,7 @@ void controller_task(void* pvParameters) {
                         medida = encoder_get_angle_rad(); // em radianos
                     }
 
-                    // Enfileira amostra para telemetria
+                    // Enfileira cada amostra calculada de acordo com o Ts configurado
                     if (_qPlot != nullptr) {
                         PlotSample sample;
                         sample.t_ms          = now - _tInicio;
@@ -261,7 +270,6 @@ void controller_task(void* pvParameters) {
                         sample.isIdentSample = true;
                         xQueueSend(_qPlot, &sample, 0);
                     }
-                    timer = millis();
                 }
                 break;
             }

@@ -17,6 +17,20 @@ static size_t _rxIndex = 0;
 /// @brief Processa uma linha completa JSON recebida pela serial.
 // -------------------------------------------------------
 static void _process_json_line(const char* jsonStr) {
+    // Fail-safe de emergencia para comando de parada:
+    // Se a string contiver "stop" ou "STOP", interrompe a operacao imediatamente,
+    // mesmo que haja ruidos ou falhas de sintaxe JSON causadas por interferencia eletromagnetica.
+    if (strstr(jsonStr, "\"stop\"") != nullptr || strstr(jsonStr, "stop") != nullptr || strstr(jsonStr, "STOP") != nullptr) {
+        if (_qPlot != nullptr) {
+            xQueueReset(_qPlot);
+        }
+        FsmEventMessage msg;
+        msg.type = EVT_STOP;
+        xQueueSend(_qEvents, &msg, portMAX_DELAY);
+        Serial.println("{\"status\":\"ok\"}");
+        return;
+    }
+
     StaticJsonDocument<1024> doc;
     DeserializationError err = deserializeJson(doc, jsonStr);
     if (err) {
@@ -32,8 +46,11 @@ static void _process_json_line(const char* jsonStr) {
         return;
     }
 
-    // Parar motor
+    // Parar motor (tratamento JSON padrao)
     if (strcmp(cmd, "stop") == 0) {
+        if (_qPlot != nullptr) {
+            xQueueReset(_qPlot);
+        }
         FsmEventMessage msg;
         msg.type = EVT_STOP;
         xQueueSend(_qEvents, &msg, portMAX_DELAY);
@@ -43,6 +60,9 @@ static void _process_json_line(const char* jsonStr) {
 
     // Reiniciar base de tempo (t = 0)
     if (strcmp(cmd, "reset_time") == 0) {
+        if (_qPlot != nullptr) {
+            xQueueReset(_qPlot);
+        }
         FsmEventMessage msg;
         msg.type = EVT_RESET_TIME;
         xQueueSend(_qEvents, &msg, portMAX_DELAY);
@@ -52,12 +72,16 @@ static void _process_json_line(const char* jsonStr) {
 
     // Iniciar identificacao PRBS
     if (strcmp(cmd, "ident") == 0) {
+        if (_qPlot != nullptr) {
+            xQueueReset(_qPlot);
+        }
         FsmEventMessage msg;
         msg.type = EVT_IDENT;
         const char* measStr = doc["measure"] | "speed";
         msg.identParams.measureSpeed = (strcmp(measStr, "position") != 0);
         msg.identParams.sampleTimeMs = constrain((int)(doc["sample_time_ms"] | 5), 1, 1000);
-        msg.identParams.stretch      = constrain((int)(doc["stretch"] | 5), 1, 100);
+        msg.identParams.stretch      = (uint16_t)constrain((int)(doc["stretch"] | 5), 1, 65535);
+        msg.identParams.seed         = (uint32_t)(doc["seed"] | 0);
 
         JsonArray arrL = doc["levels"].as<JsonArray>();
         msg.identParams.levelCount = 0;
@@ -96,6 +120,8 @@ static void _process_json_line(const char* jsonStr) {
     const char* modeStr = doc["mode"] | "speed";
     msg.params.mode = (strcmp(modeStr, "position") == 0) ? MODE_POSITION : MODE_SPEED;
 
+    msg.params.sampleTimeMs = constrain((int)(doc["sample_time_ms"] | SAMPLE_TIME_MS), 1, 1000);
+
     const char* refTypeStr = doc["ref_type"] | "internal";
     msg.params.refType = (strcmp(refTypeStr, "external") == 0) ? REF_EXTERNAL : REF_INTERNAL;
     msg.params.refMin  = doc["ref_min"] | 0.0f;
@@ -125,6 +151,10 @@ static void _process_json_line(const char* jsonStr) {
     int interval_s = doc["interval_s"] | 6;
     msg.params.intervalMs = max(1, interval_s) * 1000;
 
+    if (_qPlot != nullptr) {
+        xQueueReset(_qPlot);
+    }
+
     xQueueSend(_qEvents, &msg, portMAX_DELAY);
     Serial.println("{\"status\":\"ok\"}");
 }
@@ -141,12 +171,31 @@ void serial_comm_init(QueueHandle_t qEvents, QueueHandle_t qPlot) {
 
 void serial_comm_task(void* pvParameters) {
     (void)pvParameters;
+    static unsigned long _lastPotSerialSend = 0;
 
     for (;;) {
         // --- 1. Leitura de dados recebidos da porta serial ---
         while (Serial.available() > 0) {
             char c = (char)Serial.read();
             if (c == '\r') continue; // ignora CR
+
+            // Descarta bytes espurios de ruido quando o buffer estiver vazio
+            // (espera-se '{' para JSON, 's'/'S' para parada de emergencia, ou '\n')
+            if (_rxIndex == 0 && c != '{' && c != 's' && c != 'S' && c != '\n') {
+                continue;
+            }
+
+            // Comando de parada de emergencia de 1 caractere ('s' ou 'S')
+            if (_rxIndex == 0 && (c == 's' || c == 'S')) {
+                if (_qPlot != nullptr) {
+                    xQueueReset(_qPlot);
+                }
+                FsmEventMessage msg;
+                msg.type = EVT_STOP;
+                xQueueSend(_qEvents, &msg, portMAX_DELAY);
+                Serial.println("{\"status\":\"ok\"}");
+                continue;
+            }
 
             if (c == '\n') {
                 if (_rxIndex > 0) {
@@ -165,8 +214,9 @@ void serial_comm_task(void* pvParameters) {
         }
 
         // --- 2. Envio de amostras de telemetria da fila de plot ---
+        // Processa 1 amostra por ciclo para nunca bloquear a recepcao de comandos seriais
         PlotSample sample;
-        while (xQueueReceive(_qPlot, &sample, 0) == pdPASS) {
+        if (xQueueReceive(_qPlot, &sample, 0) == pdPASS) {
             if (sample.isIdleSample) {
                 // Em repouso: envia apenas a telemetria do potenciometro
                 Serial.print(">pot:");
@@ -205,12 +255,17 @@ void serial_comm_task(void* pvParameters) {
                 Serial.print(">u:");
                 Serial.println(sample.pwm);
 
-                Serial.print(">pot:");
-                Serial.println(sample.potNorm, 4);
+                // Envia leitura do potenciometro a cada 50 ms para economizar banda serial em Ts reduzido
+                unsigned long nowPot = millis();
+                if (nowPot - _lastPotSerialSend >= 50) {
+                    _lastPotSerialSend = nowPot;
+                    Serial.print(">pot:");
+                    Serial.println(sample.potNorm, 4);
+                }
             }
+        } else {
+            // Cede tempo da CPU quando nao ha amostras para enviar
+            vTaskDelay(pdMS_TO_TICKS(1));
         }
-
-        // Cede tempo da CPU para outras atividades e watchdog do Nucleo 0
-        vTaskDelay(pdMS_TO_TICKS(2));
     }
 }

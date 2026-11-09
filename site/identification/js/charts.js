@@ -87,7 +87,7 @@ function baseChartOptions(yLabel) {
           font: { size: 12, family: "'Roboto', Arial, sans-serif" },
           color: '#777777',
           maxTicksLimit: 16,
-          callback: v => `${Number(v).toFixed(0)}s`,
+          callback: v => { const n = Number(v); return Math.abs(n - Math.round(n)) < 1e-4 ? `${Math.round(n)}s` : `${n.toFixed(1)}s`; },
         },
       },
       y: {
@@ -248,17 +248,18 @@ export class ChartManager {
     this._hoveredTime = null;
     this._mouseState = null;
 
+    const xLimit = this._windowSec > 0 ? this._windowSec : 15;
     if (this._chartMain) {
       this._chartMain.data.datasets[0].data = [];
       this._chartMain.options.scales.x.min = 0;
-      this._chartMain.options.scales.x.max = this._windowSec > 0 ? this._windowSec : 15;
+      this._chartMain.options.scales.x.max = xLimit;
       this._chartMain.update('none');
     }
 
     if (this._chartControl) {
       this._chartControl.data.datasets[0].data = [];
       this._chartControl.options.scales.x.min = 0;
-      this._chartControl.options.scales.x.max = this._windowSec > 0 ? this._windowSec : 15;
+      this._chartControl.options.scales.x.max = xLimit;
       this._chartControl.update('none');
     }
   }
@@ -308,8 +309,16 @@ export class ChartManager {
       };
     }
 
-    const xMin = Math.max(0, lastT - this._windowSec);
-    const xMax = Math.max(xMin + this._windowSec, 15);
+    if (lastT < this._windowSec) {
+      return {
+        samples: this._all,
+        xMin: 0,
+        xMax: this._windowSec,
+      };
+    }
+
+    const xMin = lastT - this._windowSec;
+    const xMax = lastT;
 
     // Busca binária para filtrar janela
     let low = 0;

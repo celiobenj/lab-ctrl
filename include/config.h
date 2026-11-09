@@ -16,9 +16,9 @@
 #define POT_PIN         34      ///< Entrada analógica ADC1 para referência externa
 
 // --- Parametros de amostragem e limites ---
-#define SAMPLE_TIME_MS  35      ///< Periodo de amostragem em milissegundos
-#define MAX_ORDER       10      ///< Ordem maxima da equacao de diferencas
-#define MAX_LEVELS      20      ///< Quantidade maxima de niveis de referencia
+#define SAMPLE_TIME_MS             35      ///< Periodo de amostragem padrao em milissegundos
+#define MAX_ORDER                  10      ///< Ordem maxima da equacao de diferencas
+#define MAX_LEVELS                 20      ///< Quantidade maxima de niveis de referencia
 
 // --- Comunicacao Serial ---
-#define SERIAL_BAUD     115200  ///< Baud rate padrao para conexao USB
+#define SERIAL_BAUD     460800  ///< Baud rate de alta velocidade para conexao USB (4x 115200)

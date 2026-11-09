@@ -20,6 +20,8 @@ const els = {
   btnStop:        document.getElementById('btn-stop'),
 
   // Config panel
+  ctrlTs:           document.getElementById('ctrl-ts'),
+  tsWarning:        document.getElementById('ts-warning'),
   vecE:             document.getElementById('vec-e'),
   vecU:             document.getElementById('vec-u'),
   refLevels:        document.getElementById('ref-levels'),
@@ -86,6 +88,8 @@ const serial = new SerialManager();
 const charts = new ChartManager();
 const config = new ConfigPanel(
   {
+    ctrlTs:           els.ctrlTs,
+    tsWarning:        els.tsWarning,
     vecE:             els.vecE,
     vecU:             els.vecU,
     refLevels:        els.refLevels,
@@ -114,6 +118,9 @@ const config = new ConfigPanel(
 let _connState = 'disconnected'; // disconnected | waiting | connected | running | stopping
 let _pendingResetGroup = null;   // 'ref' | 'eq'
 let _stopTimer = null;
+let _stopRetryInterval = null;
+let _pendingStart = false;
+let _startFallbackTimer = null;
 
 // Quarteto de telemetria acumulado por ciclo (tempo, referencia, medida, controle u)
 let _cycleBuf = { t: null, ref: null, medida: null, u: null };
@@ -181,6 +188,7 @@ function _bindEvents() {
   // Botões de ajuda
   document.getElementById('btn-help-mode').addEventListener('click', () => _openHelp('mode'));
   document.getElementById('btn-help-ref').addEventListener('click',  () => _openHelp('ref'));
+  document.getElementById('btn-help-ts')?.addEventListener('click',   () => _openHelp('ts'));
   document.getElementById('btn-help-eq').addEventListener('click',   () => _openHelp('eq'));
 
   // Fechar modal de ajuda
@@ -189,6 +197,7 @@ function _bindEvents() {
 
   // Botões de reset (com modal de confirmação)
   document.getElementById('btn-reset-ref').addEventListener('click', () => _openReset('ref'));
+  document.getElementById('btn-reset-ts')?.addEventListener('click',  () => _openReset('ts'));
   document.getElementById('btn-reset-eq').addEventListener('click',  () => _openReset('eq'));
   els.btnModalResetCancel.addEventListener('click',  () => { els.modalReset.hidden = true; });
   els.btnModalResetConfirm.addEventListener('click', () => {
@@ -236,27 +245,72 @@ async function _onApplyClick() {
   const payload = config.getPayload();
   if (!payload) return;
   try {
-    charts.clear();
+    _pendingStart = true;
     _cycleBuf = { t: null, ref: null, medida: null, u: null };
     await serial.sendJson(payload);
-    charts.setMode(config.mode);
-    _applyConnState('running');
+
+    // Fallback: se a confirmacao {"status":"ok"} demorar mais de 400ms, inicia
+    if (_startFallbackTimer) clearTimeout(_startFallbackTimer);
+    _startFallbackTimer = setTimeout(() => {
+      if (_pendingStart) {
+        _pendingStart = false;
+        charts.clear();
+        _cycleBuf = { t: null, ref: null, medida: null, u: null };
+        charts.setMode(config.mode);
+        _applyConnState('running');
+      }
+    }, 400);
   } catch (err) {
+    _pendingStart = false;
     console.error('Falha ao enviar:', err);
   }
 }
 
 async function _onStopClick() {
   try {
-    await serial.sendJson({ cmd: 'stop' });
     _applyConnState('stopping');
-    // Retorna para 'connected' após 1,5 s
+
+    const trySendStop = async () => {
+      try {
+        await serial.sendJson({ cmd: 'stop' });
+        // Envia tambem caractere emergencial direto sem overhead JSON
+        await serial.sendRaw('s');
+      } catch (err) {
+        console.warn('Erro ao enviar comando de parada:', err);
+      }
+    };
+
+    // Primeiro disparo imediato
+    await trySendStop();
+
+    // Limpa timers anteriores
+    if (_stopRetryInterval) clearInterval(_stopRetryInterval);
     if (_stopTimer) clearTimeout(_stopTimer);
+
+    // Reenvio em rajada curta (a cada 60 ms, ate 8 tentativas) ate receber confirmacao {"status":"ok"}
+    let retries = 0;
+    _stopRetryInterval = setInterval(async () => {
+      if (_connState !== 'stopping' || ++retries > 8) {
+        clearInterval(_stopRetryInterval);
+        _stopRetryInterval = null;
+        return;
+      }
+      await trySendStop();
+    }, 60);
+
+    // Timeout de seguranca maximo (1,5 s): se nenhuma resposta chegar (ex: cabo desconectado),
+    // forca retorno a 'connected' para nao prender a interface.
     _stopTimer = setTimeout(() => {
-      if (_connState === 'stopping') _applyConnState('connected');
+      if (_stopRetryInterval) clearInterval(_stopRetryInterval);
+      _stopRetryInterval = null;
+      if (_connState === 'stopping') {
+        _applyConnState('connected');
+      }
     }, 1500);
+
   } catch (err) {
     console.error('Falha ao parar:', err);
+    _applyConnState('connected');
   }
 }
 
@@ -293,7 +347,7 @@ function _openHelp(group) {
 
 function _openReset(group) {
   _pendingResetGroup = group;
-  const labels = { ref: 'referência', eq: 'equação de diferenças' };
+  const labels = { ref: 'referência', eq: 'equação de diferenças', ts: 'taxa de amostragem' };
   document.getElementById('modal-reset-text').textContent =
     `Restaurar os valores padrão da ${labels[group]} para o modo atual?`;
   els.modalReset.hidden = false;
@@ -305,14 +359,41 @@ function _onSerialLine(line) {
   if (line.startsWith('{')) {
     try {
       const data = JSON.parse(line);
-      if (data.status === 'ok' && (_connState === 'waiting')) {
-        _applyConnState('connected');
+      if (data.status === 'ok') {
+        if (_pendingStart) {
+          if (_startFallbackTimer) {
+            clearTimeout(_startFallbackTimer);
+            _startFallbackTimer = null;
+          }
+          _pendingStart = false;
+          charts.clear();
+          _cycleBuf = { t: null, ref: null, medida: null, u: null };
+          charts.setMode(config.mode);
+          _applyConnState('running');
+        } else if (_connState === 'waiting') {
+          _applyConnState('connected');
+        } else if (_connState === 'stopping') {
+          // Confirmacao de parada recebida do firmware com sucesso
+          if (_stopRetryInterval) {
+            clearInterval(_stopRetryInterval);
+            _stopRetryInterval = null;
+          }
+          if (_stopTimer) {
+            clearTimeout(_stopTimer);
+            _stopTimer = null;
+          }
+          _cycleBuf = { t: null, ref: null, medida: null, u: null };
+          _applyConnState('connected');
+        }
       }
     } catch (_) {}
     return;
   }
 
   if (line.startsWith('>')) {
+    // Se estiver aguardando confirmacao de novo inicio ou parando, descarta dados residuais em transito
+    if (_pendingStart || _connState === 'stopping') return;
+
     const colon = line.indexOf(':');
     if (colon < 2) return;
     const name = line.substring(1, colon);
@@ -335,8 +416,10 @@ function _onSerialLine(line) {
     }
 
     if (_cycleBuf.ref !== null && _cycleBuf.medida !== null && _cycleBuf.u !== null) {
-      const t_ms = (_cycleBuf.t !== null) ? _cycleBuf.t : 0;
-      charts.pushSample(t_ms, _cycleBuf.ref, _cycleBuf.medida, _cycleBuf.u);
+      if (_connState === 'running') {
+        const t_ms = (_cycleBuf.t !== null) ? _cycleBuf.t : 0;
+        charts.pushSample(t_ms, _cycleBuf.ref, _cycleBuf.medida, _cycleBuf.u);
+      }
       _cycleBuf = { t: null, ref: null, medida: null, u: null };
     }
   }

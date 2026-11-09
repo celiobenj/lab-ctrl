@@ -3,6 +3,8 @@
 // Emite CustomEvents: 'connected', 'disconnected', 'line' (detail: string)
 // ============================================================
 
+export const SERIAL_BAUD = 460800;
+
 export class SerialManager extends EventTarget {
   constructor() {
     super();
@@ -23,7 +25,7 @@ export class SerialManager extends EventTarget {
     if (!navigator.serial) throw new Error('Web Serial API não suportada neste navegador.');
 
     this._port = await navigator.serial.requestPort();
-    await this._port.open({ baudRate: 115200 });
+    await this._port.open({ baudRate: SERIAL_BAUD });
 
     this._writer = this._port.writable.getWriter();
     this._keepReading = true;
@@ -57,10 +59,17 @@ export class SerialManager extends EventTarget {
     this.dispatchEvent(new CustomEvent('disconnected'));
   }
 
-  /** Serializa obj para JSON e envia como linha única terminada em \n. */
+  /** Serializa obj para JSON e envia delimitado por quebras de linha (\n) para isolar ruidos. */
   async sendJson(obj) {
     if (!this._writer) throw new Error('Porta serial não está aberta.');
-    const data = this._encoder.encode(JSON.stringify(obj) + '\n');
+    const data = this._encoder.encode('\n' + JSON.stringify(obj) + '\n');
+    await this._writer.write(data);
+  }
+
+  /** Envia um comando de texto puro terminado em \n (ex: parada de emergencia 's'). */
+  async sendRaw(str) {
+    if (!this._writer) throw new Error('Porta serial não está aberta.');
+    const data = this._encoder.encode(str + '\n');
     await this._writer.write(data);
   }
 

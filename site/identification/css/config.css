@@ -140,6 +140,37 @@
   border-color: var(--color-danger);
   background: var(--color-danger-bg);
 }
+.input-mono.is-invalid:focus {
+  border-color: var(--color-danger);
+  box-shadow: 0 0 0 2px rgba(229, 57, 53, 0.2);
+}
+
+.input-mono:disabled {
+  background: var(--color-surface-alt, #e9ecef);
+  color: var(--color-text-muted, #6c757d);
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--color-text);
+  user-select: none;
+  white-space: nowrap;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--color-primary);
+  flex-shrink: 0;
+  cursor: pointer;
+}
 
 .input-narrow {
   width: 74px;
@@ -185,13 +216,35 @@
 
 .stat-value {
   font-family: var(--font-mono);
-  font-size: 16px;
-  font-weight: 700;
+  font-size: 15px;
+  font-weight: 400;
   color: var(--color-text);
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+
+/* ---- Mensagem de aviso de campo ---- */
+.input-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  background: var(--color-warning-bg);
+  border: 1px solid #E8D080;
+  border-radius: var(--radius);
+  color: var(--color-warning);
+  font-size: 11.5px;
+  line-height: 1.4;
+  font-weight: 500;
+}
+
+.input-warning[hidden] {
+  display: none !important;
 }
 
 /* ---- Aviso de compatibilidade ---- */
