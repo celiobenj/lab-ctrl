@@ -23,6 +23,19 @@
   flex-shrink: 0;
 }
 
+.header-logo-link {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  border-radius: 6px;
+  transition: opacity var(--transition), transform var(--transition);
+}
+
+.header-logo-link:hover {
+  opacity: 0.82;
+  transform: scale(1.04);
+}
+
 .header-logo img {
   width: 30px;
   height: 30px;

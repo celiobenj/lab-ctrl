@@ -1,0 +1,26 @@
+{
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "lab-ctrl-motor.vercel.app"
+        }
+      ],
+      "destination": "https://lab-ctrl.vercel.app/motor-control/",
+      "permanent": true
+    },
+    {
+      "source": "/:path*",
+      "has": [
+        {
+          "type": "host",
+          "value": "lab-ctrl-identification.vercel.app"
+        }
+      ],
+      "destination": "https://lab-ctrl.vercel.app/motor-identification/",
+      "permanent": true
+    }
+  ]
+}
