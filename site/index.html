@@ -2,6 +2,13 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
+  <script>
+    if (window.location.hostname === 'lab-ctrl-motor.vercel.app') {
+      window.location.replace('https://lab-ctrl.vercel.app/motor-control/');
+    } else if (window.location.hostname === 'lab-ctrl-identification.vercel.app') {
+      window.location.replace('https://lab-ctrl.vercel.app/motor-identification/');
+    }
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Laboratório de Controle</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">

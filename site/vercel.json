@@ -1,7 +1,8 @@
 {
+  "trailingSlash": true,
   "redirects": [
     {
-      "source": "/:path*",
+      "source": "/(.*)",
       "has": [
         {
           "type": "host",
@@ -9,10 +10,10 @@
         }
       ],
       "destination": "https://lab-ctrl.vercel.app/motor-control/",
-      "permanent": true
+      "permanent": false
     },
     {
-      "source": "/:path*",
+      "source": "/(.*)",
       "has": [
         {
           "type": "host",
@@ -20,7 +21,7 @@
         }
       ],
       "destination": "https://lab-ctrl.vercel.app/motor-identification/",
-      "permanent": true
+      "permanent": false
     }
   ]
 }
