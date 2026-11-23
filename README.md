@@ -9,8 +9,8 @@ O **lab-ctrl** é uma plataforma web integrada a bancadas físicas de Laboratór
 Acesse diretamente pelo navegador (Google Chrome ou Microsoft Edge):
 
 - **Portal Principal (Hub)**: https://lab-ctrl.vercel.app/
-- **Controle de Motor DC**: https://lab-ctrl-motor.vercel.app/
-- **Identificação de Motor DC**: https://lab-ctrl-identification.vercel.app/
+- **Controle de Motor DC**: https://lab-ctrl.vercel.app/motor-control/
+- **Identificação de Motor DC**: https://lab-ctrl.vercel.app/motor-identification/
 
 ---
 
@@ -18,7 +18,7 @@ Acesse diretamente pelo navegador (Google Chrome ou Microsoft Edge):
 
 | Planta | Aplicações Web | Documentação Técnica e Firmware |
 | :--- | :--- | :--- |
-| **Motor DC com Encoder** | [Controle](https://lab-ctrl-motor.vercel.app/) / [Identificação](https://lab-ctrl-identification.vercel.app/) | [Documentação do Motor DC](firmwares/motor/README.md) |
+| **Motor DC com Encoder** | [Controle](https://lab-ctrl.vercel.app/motor-control/) / [Identificação](https://lab-ctrl.vercel.app/motor-identification/) | [Documentação do Motor DC](firmwares/motor/README.md) |
 
 Para detalhes técnicos sobre hardware, pinagem da ESP32, protocolo de comunicação serial e instruções de gravação do código na placa, consulte a documentação específica da planta na tabela acima.
 

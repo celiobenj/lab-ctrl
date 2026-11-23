@@ -3,8 +3,8 @@
 Firmware de tempo real para controle digital em malha fechada e identificação dinâmica de sistemas de um Motor DC com encoder incremental em quadratura, desenvolvido para **ESP32** sobre **FreeRTOS Dual-Core**.
 
 Este firmware atende simultaneamente às duas aplicações web da bancada do motor no projeto `lab-ctrl`:
-- **Controle em Malha Fechada**: https://lab-ctrl-motor.vercel.app/ ([código-fonte web](../../site/motor-control/))
-- **Identificação de Sistemas**: https://lab-ctrl-identification.vercel.app/ ([código-fonte web](../../site/motor-identification/))
+- **Controle em Malha Fechada**: https://lab-ctrl.vercel.app/motor-control/ ([código-fonte web](../../site/motor-control/))
+- **Identificação de Sistemas**: https://lab-ctrl.vercel.app/motor-identification/ ([código-fonte web](../../site/motor-identification/))
 
 ---
 
